@@ -127,9 +127,17 @@ private:
 class Socket
 {
 public:
+    enum class SD
+    {
+        Receive = 0,
+        Send = 1,
+        Both = 2,
+    };
     Socket();
     ~Socket();
     bool open(const char* node, const char* port);
+    bool connect();
+    void shutdown(SD sd = SD::Both);
     void close();
     int32_t send(int32_t size, const uint8_t* data);
     int32_t recieve(Buffer& buff);
@@ -137,7 +145,7 @@ public:
 private:
     Socket(const Socket&) = delete;
     Socket& operator=(const Socket&) = delete;
-    bool reconnect();
+    int32_t get_error();
     SOCKET s_;
     addrinfo address_;
 };
@@ -181,9 +189,10 @@ private:
 #ifdef CPPHTTP_IMPLEMENTATION
 #include <cctype>
 #include <cstring>
+#include <fcntl.h>
 #include <iterator>
 #include <charconv>
-#include <miniz.h>
+#include <zlib.h>
 
 #ifndef CPPHTTP_MALLOC
 #    define CPPHTTP_MALLOC(size) ::malloc(size)
@@ -1021,6 +1030,7 @@ Socket::~Socket()
 
 bool Socket::open(const char* node, const char* port)
 {
+    assert(INVALID_SOCKET == s_);
     addrinfo hints;
     ZeroMemory(&hints, sizeof(hints));
     hints.ai_family = AF_INET;
@@ -1028,21 +1038,58 @@ bool Socket::open(const char* node, const char* port)
     hints.ai_protocol = IPPROTO_TCP;
     addrinfo* result = nullptr;
     int32_t r = getaddrinfo(node, port, &hints, &result);
-    if(0 == r) {
-        s_ = socket(result->ai_family, result->ai_socktype, result->ai_protocol);
+    if(0 != r) {
+        return false;
     }
-    if(INVALID_SOCKET != s_) {
-        r = connect(s_, result->ai_addr, (int32_t)result->ai_addrlen);
-        if(r == SOCKET_ERROR) {
-            closesocket(s_);
-            s_ = INVALID_SOCKET;
-        }
-    }
-    if(nullptr != result) {
-        ::memcpy(&address_, result, sizeof(addrinfo));
+    s_ = socket(result->ai_family, result->ai_socktype, result->ai_protocol);
+    if(INVALID_SOCKET == s_) {
         freeaddrinfo(result);
+        return false;
     }
+    u_long nonblocking = 1;
+#    ifdef _WIN32
+    r = ioctlsocket(s_, FIONBIO, &nonblocking);
+#    else
+    int32_t flags = fcntl(s_, F_GETFL, 0);
+    r = fcntl(s_, F_SETFL, flags | O_NONBLOCK);
+#    endif
+    if(r < 0) {
+        freeaddrinfo(result);
+#    ifdef _WIN32
+        closesocket(s_);
+#    else
+        close(s_);
+#    endif
+        s_ = INVALID_SOCKET;
+        return false;
+    }
+
+    ::memcpy(&address_, result, sizeof(addrinfo));
+    freeaddrinfo(result);
     return INVALID_SOCKET != s_;
+}
+
+bool Socket::connect()
+{
+    assert(INVALID_SOCKET != s_);
+    int32_t r = ::connect(s_, address_.ai_addr, (int32_t)address_.ai_addrlen);
+    if(r == SOCKET_ERROR) {
+#    ifdef _WIN32
+        if(WSAEWOULDBLOCK != WSAGetLastError() && WSAEINPROGRESS != WSAGetLastError()) {
+            return false;
+        }
+#    else
+        if(EWOULDBLOCK != errno && EINPROGRESS != errno && EAGAIN != errno) {
+            return false;
+        }
+#    endif
+    }
+    return true;
+}
+
+void Socket::shutdown(SD sd)
+{
+    ::shutdown(s_, (int32_t)sd);
 }
 
 void Socket::close()
@@ -1055,31 +1102,74 @@ void Socket::close()
 
 int32_t Socket::send(int32_t size, const uint8_t* data)
 {
-    int32_t r = ::send(s_, (const char*)data, size, 0);
-    return r == SOCKET_ERROR ? -1 : r;
+    fd_set fds; 
+    FD_ZERO(&fds);
+    FD_SET(s_, &fds);
+    struct timeval tv = {};
+    tv.tv_sec = 0;
+    tv.tv_usec = 10;
+
+    for(int32_t i = 0; i < 3; ++i) {
+        int32_t r = ::select((int)(s_ + 1), nullptr, &fds, nullptr, &tv);
+        if(0 < r) {
+            r = ::send(s_, (const char*)data, size, 0);
+            return r == SOCKET_ERROR ? -1 : r;
+        }else if(r<0){
+            return -1;
+        }
+    }
+    return -1;
 }
 
 int32_t Socket::recieve(Buffer& buff)
 {
-    static constexpr int32_t BufferSize = 512;
+    static constexpr int32_t BufferSize = 1024;
     char buffer[BufferSize];
+    struct timeval tv = {};
+    tv.tv_sec = 0;
+    tv.tv_usec = 100000;
+
+    fd_set origin;
+    FD_ZERO(&origin);
+    FD_SET(s_, &origin);
+
     int32_t total = 0;
-    for(;;) {
-        int32_t r = recv(s_, buffer, BufferSize, 0);
-        if(0 < r) {
-            buff.push_back(static_cast<uint32_t>(r), (const uint8_t*)buffer);
-            total += r;
-        } else {
-            break;
+    for(int32_t i=0; i<10; ++i) {
+        fd_set fds = origin;
+        int32_t n = ::select((int)(s_+1), &fds, nullptr, nullptr, &tv);
+        if(0==n){
+            int32_t err = get_error();
+            if(0 != err && err != ETIMEDOUT){
+                return 0;
+            }
+            tv.tv_usec += 10000;
+            continue;
+        } else if(n<0){
+            return 0;
+        }
+        {
+            int32_t r = recv(s_, buffer, BufferSize, 0);
+            if(0 < r) {
+                buff.push_back(static_cast<uint32_t>(r), (const uint8_t*)buffer);
+                total += r;
+                i = 0;
+                tv.tv_usec = 10000;
+            }else if(0<r){
+                return 0;
+            }
         }
     }
     return total;
 }
 
-bool Socket::reconnect()
+int32_t Socket::get_error()
 {
-    int32_t r = connect(s_, address_.ai_addr, (int32_t)address_.ai_addrlen);
-    return r != SOCKET_ERROR;
+    int opt = 0;
+    socklen_t len = sizeof(opt);
+    if(getsockopt(s_, SOL_SOCKET, SO_ERROR, (char*)(&opt), &len) < 0) {
+        return -1;
+    }
+    return opt;
 }
 #endif
 
@@ -1087,19 +1177,57 @@ namespace
 {
     bool decode(Buffer& result)
     {
-        uint8_t* encoded = (uint8_t*)CPPHTTP_MALLOC(result.size());
-        ::memcpy(encoded, result.begin(), result.size());
+    z_stream stream;
+    stream.zalloc = NULL;
+    stream.zfree = NULL;
+    stream.opaque = NULL;
+    int32_t ret = inflateInit(&stream);
+    if(Z_OK != ret) {
+        return false;
+    }
+    uint32_t src_size = result.size();
+    uint8_t* encoded = (uint8_t*)CPPHTTP_MALLOC(src_size);
+        ::memcpy(encoded, result.begin(), src_size);
+        result.clear();
 
-        mz_zip_archive zip_archive = {};
-        mz_zip_archive_file_stat file_stat = {};
+    static constexpr uint32_t Chunk = 4096;
+    uint8_t out[Chunk];
+    uint32_t count = 0;
+    int32_t outCount = 0;
+    do {
+        if(src_size <= count) {
+            inflateEnd(&stream);
+            CPPHTTP_FREE(encoded);
+            return true;
+        }
+        uint32_t size = src_size - count;
+        stream.avail_in = size;
+        stream.next_in = encoded + count;
+        count += size;
 
-        mz_zip_reader_init_mem(&zip_archive, encoded, result.size(), 0);
-        mz_zip_reader_file_stat(&zip_archive, 0, &file_stat);
-        result.resize(file_stat.m_uncomp_size);
-        mz_bool r = mz_zip_reader_extract_to_mem(&zip_archive, 0, result.begin(), result.size(), 0);
-        mz_zip_reader_end(&zip_archive);
-        CPPHTTP_FREE(encoded);
-        return r;;
+        do {
+            stream.avail_out = Chunk;
+            stream.next_out = out;
+            ret = inflate(&stream, Z_NO_FLUSH);
+            switch(ret) {
+            case Z_NEED_DICT:
+                ret = Z_DATA_ERROR;
+                break;
+            case Z_DATA_ERROR:
+            case Z_MEM_ERROR:
+                inflateEnd(&stream);
+                CPPHTTP_FREE(encoded);
+                return false;
+            }
+            uint32_t s = Chunk - stream.avail_out;
+            result.push_back(s, out);
+            outCount += s;
+        } while(stream.avail_out == 0);
+        assert(stream.avail_in <= 0);
+    } while(ret != Z_STREAM_END);
+    inflateEnd(&stream);
+    CPPHTTP_FREE(encoded);
+    return ret == Z_STREAM_END ? true : false;
     }
 } // namespace
 
@@ -1158,13 +1286,18 @@ Http::Http()
 
 bool Http::get(Buffer& result, const char8_t* content_type)
 {
+    if(!socket_.connect()){
+        return false;
+    }
     {
         result.clear();
         set_header(result, true, 0, content_type);
-
+        //char buf[256];
+        //::snprintf(buf, result.size(), "%s", result.begin());
         int32_t r = socket_.send(result.size(), &result[0]);
         result.clear();
         if(r<0){
+            socket_.shutdown();
             return false;
         }
     }
@@ -1172,6 +1305,7 @@ bool Http::get(Buffer& result, const char8_t* content_type)
     {
         int32_t r = socket_.recieve(result);
         if(r<=0 || result.size()<=0){
+            socket_.shutdown();
             return false;
         }
         const char8_t* begin = (const char8_t*)result.begin();
@@ -1184,18 +1318,18 @@ bool Http::get(Buffer& result, const char8_t* content_type)
         if(200 != status
             || (0<length && static_cast<uint32_t>(length)!=size)
             || (Encoding::None != encoding && Encoding::GZip!=encoding)){
+            socket_.shutdown();
             return false;
         }
         result.pop_front(std::distance((const char8_t*)&result[0], begin));
         if(Encoding::GZip==encoding){
             if(!decode(result)){
+                socket_.shutdown();
                 return false;
             }
         }
-        //char buf[128];
-        //snprintf(buf, result.size(), "%s", (const char*)&result[0]);
-        //puts(buf);
     }
+    socket_.shutdown();
     return true;
 }
 
@@ -1264,6 +1398,7 @@ void Http::set_header(Buffer& header, bool get, uint32_t size, const char8_t* co
             header.push_str((const uint8_t*)"\r\n");
         }
         header.push_str((const uint8_t*)"Accept-Encoding: gzip\r\n");
+        header.push_str((const uint8_t*)"\r\n");
 }
 
 namespace
@@ -1358,19 +1493,12 @@ namespace
             ++current;
         }
          if(end <= current
-            || u8'g' != *current
-            || u8'c' != *current
-            || u8'd' != *current
-            || u8'b' != *current) {
+            || (u8'g' != *current
+            && u8'c' != *current
+            && u8'd' != *current
+            && u8'b' != *current)) {
              return Http::Encoding::None;
          }
-        const char8_t* number = current;
-        while(current<end){
-            if(!is_digit(*current)){
-                break;
-            }
-            ++current;
-        }
         const char8_t* encoding = current;
         while(current<end){
             if(!is_alpha(*current)){
@@ -1405,7 +1533,7 @@ namespace
                 length = parse_number(current+15, end);
                 current = skip_line(current, end);
             }else if(0==::strncmp((const char*)current, "Content-Encoding:", 17)){
-                encoding = parse_encoding(current+15, end);
+                encoding = parse_encoding(current+17, end);
                 current = skip_line(current, end);
             }else{
                 current = skip_line(current, end);
@@ -1432,6 +1560,8 @@ namespace
 
 const char8_t* Http::parse(int32_t& status, int32_t& length, Encoding& encoding, const char8_t* current, const char8_t* end)
 {
+    char buffer[1024];
+    snprintf(buffer, 1024, "%s", (const char*)current);
     status = 0;
     length = 0;
     encoding = Encoding::None;

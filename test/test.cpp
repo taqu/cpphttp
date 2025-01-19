@@ -1,6 +1,18 @@
 #include "../cpphttp.h"
 #include "catch_wrap.hpp"
 #include <cstdio>
+#include <string>
+
+TEST_CASE("TestURL::Buffer")
+{
+	using namespace cpphttp;
+
+	Buffer buffer;
+	buffer.push_back(strlen("abcd"), (const uint8_t*)"abcd");
+	buffer.push_back(strlen("efgh"), (const uint8_t*)"efgh");
+	buffer.push_back(1,(const uint8_t*)"\0");
+	printf("%s\n", (const char*)&buffer[0]);
+}
 
 TEST_CASE("TestURL::Parse")
 {
@@ -32,14 +44,20 @@ TEST_CASE("TestURL::Parse")
 		printf(buffer);
     }
 }
+
 TEST_CASE("TestURL::Get")
 {
 	using namespace cpphttp;
 	bool result;
 	const char8_t* url;
-	url = u8"http://2-terra-tech1.cs.sega:9091/";
+	url = u8"http://192.168.128.152:9090/";
 	Http http;
 	result = http.open(url);
 	Buffer buffer;
 	http.get(buffer, nullptr);
+	if(0<buffer.size()){
+		buffer.push_back(1, (const uint8_t*)"\0");
+		const char* s = (const char*)buffer.begin();
+		printf("%s", s);
+	}
 }

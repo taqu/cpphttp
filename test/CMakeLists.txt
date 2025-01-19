@@ -5,18 +5,55 @@ set(CMAKE_CONFIGURATION_TYPES "Debug" "Release")
 set(PROJECT_NAME cpphttp)
 project(${PROJECT_NAME})
 
-set(SOURCE_ROOT "${CMAKE_CURRENT_SOURCE_DIR}")
-include_directories(AFTER "${SOURCE_ROOT}/../miniz")
+set(SOURCE_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/..")
+set(ZLIB_ROOT "${SOURCE_ROOT}/zlib")
+include_directories(AFTER "${ZLIB_ROOT}")
+
+set(ZLIB_PUBLIC_HDRS
+    ${ZLIB_ROOT}/zconf.h
+    ${ZLIB_ROOT}/zlib.h
+)
+set(ZLIB_PRIVATE_HDRS
+    ${ZLIB_ROOT}/crc32.h
+    ${ZLIB_ROOT}/deflate.h
+    ${ZLIB_ROOT}/gzguts.h
+    ${ZLIB_ROOT}/inffast.h
+    ${ZLIB_ROOT}/inffixed.h
+    ${ZLIB_ROOT}/inflate.h
+    ${ZLIB_ROOT}/inftrees.h
+    ${ZLIB_ROOT}/trees.h
+    ${ZLIB_ROOT}/zutil.h
+)
+set(ZLIB_SRCS
+    ${ZLIB_ROOT}/adler32.c
+    ${ZLIB_ROOT}/compress.c
+    ${ZLIB_ROOT}/crc32.c
+    ${ZLIB_ROOT}/deflate.c
+    ${ZLIB_ROOT}/gzclose.c
+    ${ZLIB_ROOT}/gzlib.c
+    ${ZLIB_ROOT}/gzread.c
+    ${ZLIB_ROOT}/gzwrite.c
+    ${ZLIB_ROOT}/inflate.c
+    ${ZLIB_ROOT}/infback.c
+    ${ZLIB_ROOT}/inftrees.c
+    ${ZLIB_ROOT}/inffast.c
+    ${ZLIB_ROOT}/trees.c
+    ${ZLIB_ROOT}/uncompr.c
+    ${ZLIB_ROOT}/zutil.c
+)
 
 ########################################################################
 # Sources
-set(HEADERS "../cpphttp.h;../miniz/miniz.h;catch_amalgamated.hpp")
-set(SOURCES "../cpphttp.cpp;../miniz/miniz.c;main.cpp;test.cpp;catch_amalgamated.cpp")
+set(HEADERS "../cpphttp.h;catch_amalgamated.hpp")
+set(SOURCES "../cpphttp.cpp;main.cpp;test.cpp;catch_amalgamated.cpp")
 
 source_group("include" FILES ${HEADERS})
+source_group("include/zlib" FILES ${ZLIB_PUBLIC_HDRS})
+source_group("include/zlib" FILES ${ZLIB_PRIVATE_HDRS})
 source_group("src" FILES ${SOURCES})
+source_group("src/zlib" FILES ${ZLIB_SRCS})
 
-set(FILES ${HEADERS} ${SOURCES})
+set(FILES ${HEADERS} ${SOURCES} ${ZLIB_PUBLIC_HDRS} ${ZLIB_PRIVATE_HDRS} ${ZLIB_SRCS})
 
 set(OUTPUT_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/bin")
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY_DEBUG "${OUTPUT_DIRECTORY}")
