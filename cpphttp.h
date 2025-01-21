@@ -1420,12 +1420,24 @@ namespace cpphttp
 	//-------------------------------------------
 	namespace
 	{
+        void* http_calloc(void* opaque, uint32_t items, uint32_t size)
+        {
+            (void)opaque;
+			return CPPHTTP_MALLOC(items*size);
+        }
+
+        void http_free(void* opaque, void* ptr)
+        {
+            (void)opaque;
+            CPPHTTP_FREE(ptr);
+        }
+
 		bool decode(Buffer& result)
 		{
 			z_stream stream;
-			stream.zalloc = NULL;
-			stream.zfree = NULL;
-			stream.opaque = NULL;
+			stream.zalloc = http_calloc;
+			stream.zfree = http_free;
+			stream.opaque = nullptr;
 			int32_t ret = inflateInit2(&stream, 32);
 			if (Z_OK != ret) {
 				return false;
