@@ -243,6 +243,8 @@ namespace cpphttp
 #endif // INC_CPPHTTP_H_
 
 #ifdef CPPHTTP_IMPLEMENTATION
+#ifndef CPPHTTP_IMPLEMENTATION_IMPL
+#define CPPHTTP_IMPLEMENTATION_IMPL
 #include <cctype>
 #include <charconv>
 #include <cstring>
@@ -1824,4 +1826,6 @@ namespace cpphttp
 	}
 
 } // namespace cpphttp
-#endif
+#endif // CPPHTTP_IMPLEMENTATION_IMPL
+#endif //CPPHTTP_IMPLEMENTATION
+
