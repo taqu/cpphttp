@@ -225,14 +225,18 @@ namespace cpphttp
 		Http();
 		~Http();
 		bool open(const char8_t* url);
+		bool open(const char8_t* host, const char8_t* port);
 		void close();
 
 		bool get(Buffer& result, const char8_t* content_type = nullptr);
 		bool post(Buffer& result, uint32_t size, const char8_t* data, const char8_t* content_type = nullptr);
+
+		bool get_path(Buffer& result, const char8_t* path, const char8_t* content_type = nullptr);
+		bool post_path(Buffer& result, const char8_t* path, uint32_t size, const char8_t* data, const char8_t* content_type = nullptr);
 	private:
 		Http(const Http&) = delete;
 		Http& operator=(const Http&) = delete;
-		void set_header(Buffer& header, bool get, uint32_t size, const char8_t* content_type);
+		void set_header(Buffer& header, bool get, const char* path, uint32_t size, const char8_t* content_type);
 		const char8_t* parse(int32_t& status, int32_t& length, Encoding& encoding, const char8_t* begin, const char8_t* end);
 		Socket socket_;
 		char host_[MaxHostSize];
@@ -1548,6 +1552,22 @@ namespace cpphttp
 		return true;
 	}
 
+	bool Http::open(const char8_t* host, const char8_t* port)
+    {
+		assert(nullptr != host);
+		if(nullptr == port){
+			static const char8_t* DefaultPort = u8"80";
+			port = DefaultPort;
+		}
+		if (!socket_.open((const char*)host, (const char*)port)) {
+			return false;
+		}
+		path_[0] = u8'\0';
+		strncpy(host_, (const char*)host, MaxHostSize);
+		strncpy(port_, (const char*)port, MaxPortSize);
+		return true;
+    }
+
 	void Http::close()
 	{
 		socket_.close();
@@ -1558,12 +1578,23 @@ namespace cpphttp
 
 	bool Http::get(Buffer& result, const char8_t* content_type)
 	{
+		return get_path(result, (const char8_t*)path_, content_type);
+	}
+
+	bool Http::post(Buffer& result, uint32_t size, const char8_t* data, const char8_t* content_type)
+	{
+		return post_path(result, (const char8_t*)path_, size, data, content_type);
+	}
+
+	bool Http::get_path(Buffer& result, const char8_t* path, const char8_t* content_type)
+	{
+		assert(nullptr != path);
 		if (!socket_.connect()) {
 			return false;
 		}
 		{
 			result.clear();
-			set_header(result, true, 0, content_type);
+			set_header(result, true, (const char*)path, 0, content_type);
 			// char buf[256];
 			//::snprintf(buf, result.size(), "%s", result.begin());
 			int32_t r = socket_.send(result.size(), &result[0]);
@@ -1605,11 +1636,14 @@ namespace cpphttp
 		return true;
 	}
 
-	bool Http::post(Buffer& result, uint32_t size, const char8_t* data, const char8_t* content_type)
+	bool Http::post_path(Buffer& result, const char8_t* path, uint32_t size, const char8_t* data, const char8_t* content_type)
 	{
+		if (!socket_.connect()) {
+			return false;
+		}
 		{
 			result.clear();
-			set_header(result, false, size, content_type);
+			set_header(result, false, (const char*)path, size, content_type);
 			result.push_back(size, (const uint8_t*)data);
 
 			int32_t r = socket_.send(result.size(), &result[0]);
@@ -1645,7 +1679,7 @@ namespace cpphttp
 		return true;
 	}
 
-	void Http::set_header(Buffer& header, bool get, uint32_t size, const char8_t* content_type)
+	void Http::set_header(Buffer& header, bool get, const char* path, uint32_t size, const char8_t* content_type)
 	{
 		if (get) {
 			header.push_str((const uint8_t*)"GET /");
@@ -1653,7 +1687,7 @@ namespace cpphttp
 		else {
 			header.push_str((const uint8_t*)"POST /");
 		}
-		header.push_str((const uint8_t*)path_);
+		header.push_str((const uint8_t*)path);
 		header.push_str((const uint8_t*)" HTTP/1.1\r\nHOST: ");
 		header.push_str((const uint8_t*)host_);
 		header.push_str((const uint8_t*)"\r\n");
