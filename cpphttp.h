@@ -1,7 +1,7 @@
 #ifndef INC_CPPHTTP_H_
 #define INC_CPPHTTP_H_
 /*
-﻿# License
+# License
 This software is distributed under two licenses, choose whichever you like.
 
 ## MIT License
@@ -264,6 +264,18 @@ namespace cpphttp
 {
 	namespace
 	{
+		uint32_t cpphttp_strlen(const char8_t* str)
+		{
+			assert(nullptr != str);
+			return static_cast<uint32_t>(::strlen((const char*)str));
+		}
+
+		uint32_t cpphttp_strlen(const uint8_t* str)
+		{
+			assert(nullptr != str);
+			return static_cast<uint32_t>(::strlen((const char*)str));
+		}
+
 		bool is_alpha(char8_t c)
 		{
 			return isalpha(c);
@@ -1024,7 +1036,7 @@ namespace cpphttp
 
 	void Buffer::push_str(const uint8_t* str)
 	{
-		uint32_t s = ::strlen((const char*)str);
+		uint32_t s = cpphttp_strlen(str);
 		push_back(s, str);
 	}
 
@@ -1507,7 +1519,7 @@ namespace cpphttp
 		Section host;
 		Section port;
 		Section path;
-		if (!parse_url(scheme, host, port, path, ::strlen((const char*)url), url)) {
+		if (!parse_url(scheme, host, port, path, cpphttp_strlen(url), url)) {
 			return false;
 		}
 		if (scheme.size_ <= 0 || host.size_ <= 0 || MaxHostSize <= host.size_ || MaxPathSize <= path.size_) {
@@ -1524,7 +1536,9 @@ namespace cpphttp
 			port_[port.size_] = '\0';
 		}
 		else {
-			::strcat(port_, "80");
+			port_[0] = '8';
+			port_[1] = '0';
+			port_[2] = '\0';
 		}
 		::memcpy(path_, path.str_, path.size_);
 		path_[path.size_] = '\0';
@@ -1579,7 +1593,7 @@ namespace cpphttp
 				socket_.shutdown();
 				return false;
 			}
-			result.pop_front(std::distance((const char8_t*)&result[0], begin));
+			result.pop_front(static_cast<uint32_t>(std::distance((const char8_t*)&result[0], begin)));
 			if (Encoding::GZip == encoding) {
 				if (!decode(result)) {
 					socket_.shutdown();
@@ -1616,13 +1630,12 @@ namespace cpphttp
 			int32_t length;
 			Encoding encoding;
 			begin = parse(status, length, encoding, begin, end);
-			size_t size = std::distance(begin, end);
 			if (200 != status
-				|| (0 < length && static_cast<uint32_t>(length) != size)
+				|| (0 < length && static_cast<uint32_t>(length) != static_cast<uint32_t>(std::distance(begin, end)))
 				|| (Encoding::None != encoding && Encoding::GZip != encoding)) {
 				return false;
 			}
-			result.pop_front(std::distance((const char8_t*)&result[0], begin));
+			result.pop_front(static_cast<uint32_t>(std::distance((const char8_t*)&result[0], begin)));
 			if (Encoding::GZip == encoding) {
 				if (!decode(result)) {
 					return false;
@@ -1765,7 +1778,7 @@ namespace cpphttp
 				}
 				++current;
 			}
-			uint32_t len = std::distance(encoding, current);
+			uint32_t len = static_cast<uint32_t>(std::distance(encoding, current));
 			if (0 == strncmp((const char*)encoding, "gzip", len)) {
 				return Http::Encoding::GZip;
 			}
